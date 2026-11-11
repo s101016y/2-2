@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>경량 마크다운 에디터</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, "Noto Sans KR", sans-serif;
+      background: #f4f6f8;
+      color: #222;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px;
+      background: #ffffff;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .toolbar button {
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      background: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .toolbar button:hover {
+      background: #eef3ff;
+      border-color: #7aa7ff;
+    }
+
+    .container {
+      display: flex;
+      height: calc(100vh - 62px);
+    }
+
+    .editor-area,
+    .preview-area {
+      width: 50%;
+      padding: 16px;
+    }
+
+    .editor-area {
+      border-right: 1px solid #ddd;
+      background: #fafafa;
+    }
+
+    #editor {
+      width: 100%;
+      height: 100%;
+      resize: none;
+      padding: 16px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 16px;
+      line-height: 1.6;
+      outline: none;
+      background: #fff;
+    }
+
+    #editor:focus {
+      border-color: #5b8def;
+      box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.15);
+    }
+
+    #preview {
+      width: 100%;
+      height: 100%;
+      overflow-y: auto;
+      padding: 16px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
+      line-height: 1.6;
+      word-break: break-word;
+    }
+
+    #preview h1 {
+      font-size: 2em;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 8px;
+    }
+
+    #preview h2 {
+      font-size: 1.5em;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 6px;
+    }
+
+    #preview blockquote {
+      margin: 8px 0;
+      padding: 8px 12px;
+      border-left: 4px solid #7aa7ff;
+      background: #f3f7ff;
+      color: #444;
+    }
+
+    #preview ul {
+      padding-left: 24px;
+    }
+
+    #preview code {
+      background: #f1f1f1;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-family: Consolas, monospace;
+    }
+
+    #preview a {
+      color: #2868d8;
+    }
+
+    #preview img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 8px 0;
+      border-radius: 6px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 800px) {
+      .container {
+        flex-direction: column;
+        height: auto;
+      }
+
+      .editor-area,
+      .preview-area {
+        width: 100%;
+        height: 50vh;
+      }
+
+      .editor-area {
+        border-right: none;
+        border-bottom: 1px solid #ddd;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="toolbar">
+    <button data-format="h1">H1</button>
+    <button data-format="h2">H2</button>
+    <button data-format="bold">굵게</button>
+    <button data-format="italic">기울임</button>
+    <button data-format="strike">취소선</button>
+    <button data-format="quote">인용구</button>
+    <button data-format="list">목록</button>
+    <button data-format="code">코드</button>
+
+    <button id="loadBtn">파일 불러오기</button>
+    <button id="saveBtn">파일 저장</button>
+    <button id="copyBtn">본문 복사</button>
+    <button id="saveHtmlBtn">HTML 저장</button>
+
+    <input id="fileInput" class="hidden" type="file" accept=".md,.txt" />
+  </div>
+
+  <div class="container">
+    <div class="editor-area">
+      <textarea id="editor" placeholder="여기에 마크다운을 입력하세요."></textarea>
+    </div>
+
+    <div class="preview-area">
+      <div id="preview"></div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const editor = document.getElementById("editor");
+      const preview = document.getElementById("preview");
+      const fileInput = document.getElementById("fileInput");
+
+      const STORAGE_KEY = "light-markdown-editor-content";
+
+      const defaultText =
+`# 경량 마크다운 에디터
+
+왼쪽에 **마크다운**을 입력하면 오른쪽에서 바로 확인할 수 있습니다.
+
+## 예시
+
+- 목록입니다
+- 두 번째 목록입니다
+
+> 인용구입니다.
+
+[링크 예시](https://example.com)
+
+\`인라인 코드\`
+`;
+
+      editor.value = localStorage.getItem(STORAGE_KEY) || defaultText;
+
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function safeUrl(url) {
+        const trimmed = url.trim();
+
+        if (/^javascript:/i.test(trimmed)) {
+          return "#";
+        }
+
+        return trimmed.replace(/"/g, "%22");
+      }
+
+      function parseInline(text) {
+        const codeStore = [];
+
+        text = text.replace(/`([^`]+)`/g, (match, code) => {
+          const key = `@@CODE${codeStore.length}@@`;
+          codeStore.push(`<code>${code}</code>`);
+          return key;
+        });
+
+        text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+          return `<img src="${safeUrl(url)}" alt="${alt}">`;
+        });
+
+        text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => {
+          return `<a href="${safeUrl(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+        });
+
+        text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+        text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+        text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+
+        codeStore.forEach((codeHtml, index) => {
+          text = text.replace(`@@CODE${index}@@`, codeHtml);
+        });
+
+        return text;
+      }
+
+      function markdownToHtml(markdown) {
+        const escaped = escapeHtml(markdown).replace(/\r\n/g, "\n");
+        const lines = escaped.split("\n");
+        const htmlLines = [];
+
+        let i = 0;
+
+        while (i < lines.length) {
+          const line = lines[i];
+
+          if (/^- (.*)/.test(line)) {
+            const items = [];
+
+            while (i < lines.length && /^- (.*)/.test(lines[i])) {
+              const itemText = lines[i].replace(/^- /, "");
+              items.push(`<li>${parseInline(itemText)}</li>`);
+              i++;
+            }
+
+            htmlLines.push(`<ul>${items.join("")}</ul>`);
+            continue;
+          }
+
+          if (/^## (.*)/.test(line)) {
+            htmlLines.push(`<h2>${parseInline(line.replace(/^## /, ""))}</h2>`);
+          } else if (/^# (.*)/.test(line)) {
+            htmlLines.push(`<h1>${parseInline(line.replace(/^# /, ""))}</h1>`);
+          } else if (/^&gt; ?(.*)/.test(line)) {
+            htmlLines.push(`<blockquote>${parseInline(line.replace(/^&gt; ?/, ""))}</blockquote>`);
+          } else if (line.trim() === "") {
+            htmlLines.push("");
+          } else {
+            htmlLines.push(parseInline(line));
+          }
+
+          i++;
+        }
+
+        return htmlLines.join("<br>\n");
+      }
+
+      function renderMarkdown() {
+        preview.innerHTML = markdownToHtml(editor.value);
+      }
+
+      editor.addEventListener("input", () => {
+        localStorage.setItem(STORAGE_KEY, editor.value);
+        renderMarkdown();
+      });
+
+      renderMarkdown();
+
+      document.querySelectorAll("[data-format]").forEach(button => {
+        button.addEventListener("click", () => {
+          applyFormat(button.dataset.format);
+        });
+      });
+
+      function applyFormat(format) {
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const selected = editor.value.slice(start, end);
+
+        const formats = {
+          h1: { before: "# ", after: "", block: true },
+          h2: { before: "## ", after: "", block: true },
+          bold: { before: "**", after: "**" },
+          italic: { before: "*", after: "*" },
+          strike: { before: "~~", after: "~~" },
+          quote: { before: "> ", after: "", block: true },
+          list: { before: "- ", after: "", block: true },
+          code: { before: "`", after: "`" }
+        };
+
+        const rule = formats[format];
+
+        if (!rule) return;
+
+        let insertText;
+
+        if (selected && rule.block) {
+          insertText = selected
+            .split("\n")
+            .map(line => rule.before + line)
+            .join("\n");
+        } else {
+          insertText = rule.before + selected + rule.after;
+        }
+
+        editor.value =
+          editor.value.slice(0, start) +
+          insertText +
+          editor.value.slice(end);
+
+        if (selected) {
+          editor.selectionStart = start;
+          editor.selectionEnd = start + insertText.length;
+        } else {
+          editor.selectionStart = editor.selectionEnd = start + rule.before.length;
+        }
+
+        editor.focus();
+        localStorage.setItem(STORAGE_KEY, editor.value);
+        renderMarkdown();
+      }
+
+      document.getElementById("loadBtn").addEventListener("click", () => {
+        fileInput.value = "";
+        fileInput.click();
+      });
+
+      fileInput.addEventListener("change", () => {
+        const file = fileInput.files[0];
+
+        if (!file) return;
+
+        const fileName = file.name.toLowerCase();
+
+        if (!fileName.endsWith(".md") && !fileName.endsWith(".txt")) {
+          alert(".md 또는 .txt 파일만 불러올 수 있습니다.");
+          return;
+        }
+
+        if (editor.value.trim() !== "") {
+          const ok = confirm("작성 중인 내용이 대체됩니다. 계속하시겠습니까?");
+          if (!ok) return;
+        }
+
+        const reader = new FileReader();
+
+        reader.onload = event => {
+          editor.value = event.target.result;
+          localStorage.setItem(STORAGE_KEY, editor.value);
+          renderMarkdown();
+        };
+
+        reader.readAsText(file, "UTF-8");
+      });
+
+      document.getElementById("saveBtn").addEventListener("click", () => {
+        let fileName = prompt("저장할 파일 이름을 입력하세요.", "document");
+
+        if (!fileName) return;
+
+        if (!fileName.toLowerCase().endsWith(".md")) {
+          fileName += ".md";
+        }
+
+        downloadFile(fileName, editor.value, "text/markdown;charset=utf-8");
+      });
+
+      document.getElementById("copyBtn").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(editor.value);
+          alert("클립보드에 복사되었습니다.");
+        } catch (error) {
+          alert("복사에 실패했습니다. 브라우저 권한을 확인하세요.");
+        }
+      });
+
+      document.getElementById("saveHtmlBtn").addEventListener("click", () => {
+        let fileName = prompt("저장할 HTML 파일 이름을 입력하세요.", "document");
+
+        if (!fileName) return;
+
+        if (!fileName.toLowerCase().endsWith(".html")) {
+          fileName += ".html";
+        }
+
+        const htmlContent =
+`<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Markdown Export</title>
+</head>
+<body>
+${preview.innerHTML}
+</body>
+</html>`;
+
+        downloadFile(fileName, htmlContent, "text/html;charset=utf-8");
+      });
+
+      function downloadFile(fileName, content, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        a.click();
+
+        URL.revokeObjectURL(url);
+      }
+
+      let isSyncingScroll = false;
+
+      editor.addEventListener("scroll", () => {
+        if (isSyncingScroll) return;
+
+        isSyncingScroll = true;
+
+        const ratio =
+          editor.scrollTop / (editor.scrollHeight - editor.clientHeight || 1);
+
+        preview.scrollTop =
+          ratio * (preview.scrollHeight - preview.clientHeight);
+
+        isSyncingScroll = false;
+      });
+
+      preview.addEventListener("scroll", () => {
+        if (isSyncingScroll) return;
+
+        isSyncingScroll = true;
+
+        const ratio =
+          preview.scrollTop / (preview.scrollHeight - preview.clientHeight || 1);
+
+        editor.scrollTop =
+          ratio * (editor.scrollHeight - editor.clientHeight);
+
+        isSyncingScroll = false;
+      });
+    });
+  </script>
+</body>
+</html>
